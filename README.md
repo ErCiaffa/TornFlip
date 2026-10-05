@@ -45,9 +45,27 @@ POLL_INTERVAL_SECONDS=60
 
 ## 💻 Utilizzo
 
+### 🌐 Interfaccia Grafica Web (Dashboard)
+Per avviare la nuova interfaccia grafica moderna con dark mode e aggiornamenti live:
+
 ```bash
-# 1. Verifica stato del sistema e connessione
-python3 main.py status
+python3 app.py
+# oppure
+python3 main.py web
+```
+Poi apri nel browser: **`http://localhost:5000`**
+
+Dall'interfaccia puoi:
+- Visualizzare in tempo reale il **Radar Affari** (Zero-Risk Pawn, sconti su bazaar, spread gaps).
+- Cliccare **"Compra"** per aprire direttamente il bazaar del venditore su Torn.
+- Consultare la matrice **Travel Flipping** live con slider per la capienza valigia (da 5 a 29 slot).
+- Controllare i **City Shops** di Torn per arbitraggio immediato da negozio NPC.
+- Usare il **Calcolatore Margine e Tasse** (confronto 0% bazaar vs 5% item market).
+- Impostare la tua API Key e personalizzare soglie e budget direttamente dalla UI.
+
+---
+
+### ⌨️ Comandi CLI (Terminale)
 
 # 2. Opportunità di viaggio live (senza bisogno di API key, dati YATA in tempo reale)
 python3 main.py travel

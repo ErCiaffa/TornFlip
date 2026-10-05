@@ -275,15 +275,22 @@ def main():
     show_banner()
     
     parser = argparse.ArgumentParser(description="TornFlip - Personal Market Flipping Assistant")
-    parser.add_argument("command", nargs="?", default="status", choices=["sync", "scan", "travel", "city", "monitor", "status", "deals"],
+    parser.add_argument("command", nargs="?", default="status", choices=["sync", "scan", "travel", "city", "monitor", "status", "deals", "web"],
                         help="Comando da eseguire")
     args = parser.parse_args()
     
     api_client = TornAPIClient(TORN_API_KEY)
     
-    if args.command == "status":
+    if args.command == "web":
+        from app import app as flask_app
+        port = int(os.getenv("PORT", 5000))
+        console.print(f"[bold green][✓] Avvio interfaccia grafica web su: http://localhost:{port}[/bold green]")
+        console.print("[dim]Apri il link nel browser per accedere alla dashboard. Premi Ctrl+C per arrestare.[/dim]")
+        flask_app.run(host="0.0.0.0", port=port, debug=False)
+    elif args.command == "status":
         cmd_status()
         console.print("\n[dim]Comandi disponibili:[/dim]")
+        console.print("  [bold cyan]python main.py web[/bold cyan]      -> 🚀 Avvia l'interfaccia grafica moderna (Dashboard)")
         console.print("  [bold cyan]python main.py travel[/bold cyan]   -> Opportunità di flipping estero (Plushies/Fiori) con YATA live")
         console.print("  [bold cyan]python main.py sync[/bold cyan]     -> Sincronizza il catalogo oggetti con Torn API")
         console.print("  [bold cyan]python main.py scan[/bold cyan]     -> Scansiona bazaar e trova sconti/errori di prezzo")

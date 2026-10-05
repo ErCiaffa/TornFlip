@@ -3,22 +3,38 @@ from config import (
     MIN_PROFIT_PERCENT,
     MIN_PROFIT_VALUE,
     MAX_BUY_BUDGET,
-    ITEM_MARKET_FEE_PCT
+    ITEM_MARKET_FEE_PCT,
+    AVOID_ITEMS,
+    MADPUP_CRIME_ITEMS,
+    MADPUP_EVENT_ITEMS,
+    MUG_RISK_THRESHOLD
 )
 from database import save_deal
 
 class FlippingEngine:
     def __init__(self, min_profit_pct: float = MIN_PROFIT_PERCENT, min_profit_val: int = MIN_PROFIT_VALUE):
-        self.min_profit_pct = min_profit_pct
+        # Madpup: target standard almeno 10%
+        self.min_profit_pct = max(min_profit_pct, 10.0)
         self.min_profit_val = min_profit_val
+
+    def is_avoided(self, item_name: str) -> bool:
+        """Controlla se l'articolo è tra quelli sconsigliati da Madpup (es. Xanax, EDVD, Sand)."""
+        return any(avoid.lower() in item_name.lower() for avoid in AVOID_ITEMS)
 
     def analyze_item_listings(self, item: dict, market_data: dict) -> List[dict]:
         """
         Analizza le quotazioni di un oggetto (bazaar e item market) e rileva affari:
         1. Rischio zero (prezzo < prezzo di vendita al banco dei pegni/NPC)
-        2. Forte sconto rispetto al market_value medio
-        3. Arbitraggio di spread (primo prezzo molto più basso del secondo/terzo)
+        2. Madpup Crime Drops (HPCPU, Bank Statement, Medical Bill svenduti dai noob)
+        3. Event Items (Cannabis, Beer, Blood Bags prima degli eventi)
+        4. Forte sconto rispetto al market_value medio (>=10%)
+        5. Arbitraggio di spread (primo prezzo molto più basso del secondo/terzo)
         """
+        item_name = item.get("name", "")
+        # Filtro Madpup: salta gli articoli trappola
+        if self.is_avoided(item_name):
+            return []
+
         deals = []
         bazaar_listings = market_data.get("bazaar", []) or []
         itemmarket_listings = market_data.get("itemmarket", []) or []
@@ -35,6 +51,12 @@ class FlippingEngine:
             buy_cost = lowest.get("cost", 0)
             quantity = lowest.get("quantity", 1)
             player_id = lowest.get("player_id")
+            
+            is_crime_item = any(ci.lower() in item_name.lower() for ci in MADPUP_CRIME_ITEMS)
+            is_event_item = any(ei.lower() in item_name.lower() for ei in MADPUP_EVENT_ITEMS)
+            
+            total_buy_cost = buy_cost * quantity
+            mug_risk = (total_buy_cost >= MUG_RISK_THRESHOLD)
             
             # --- DEAL TIPO 1: ISTANTANEO PAWN SHOP (RISCHIO ZERO) ---
             if pawn_price > 0 and buy_cost < pawn_price:
@@ -54,10 +76,88 @@ class FlippingEngine:
                     "total_profit": total_profit,
                     "roi_pct": roi,
                     "seller_id": player_id,
+                    "mug_risk": mug_risk,
                     "buy_url": f"https://www.torn.com/bazaar.php?userId={player_id}#/p=bazaar&userID={player_id}"
                 }
                 deals.append(deal)
                 save_deal(deal)
+                
+            # --- DEAL TIPO 2: MADPUP NOOB CRIME DUMP (HPCPU, Bank Statements, ecc.) ---
+            elif is_crime_item and market_val > 0 and buy_cost <= (market_val * 0.70):
+                target_sell = int(market_val * 0.98)
+                profit_per_item = target_sell - buy_cost
+                total_profit = profit_per_item * quantity
+                roi = round((profit_per_item / buy_cost) * 100, 1) if buy_cost > 0 else 0.0
+                
+                deal = {
+                    "item_id": item["id"],
+                    "item_name": item["name"],
+                    "deal_type": "MADPUP_CRIME_DUMP",
+                    "buy_source": "Bazaar",
+                    "buy_price": buy_cost,
+                    "target_sell_price": target_sell,
+                    "quantity_available": quantity,
+                    "profit_per_item": profit_per_item,
+                    "total_profit": total_profit,
+                    "roi_pct": roi,
+                    "seller_id": player_id,
+                    "mug_risk": mug_risk,
+                    "buy_url": f"https://www.torn.com/bazaar.php?userId={player_id}#/p=bazaar&userID={player_id}"
+                }
+                deals.append(deal)
+                save_deal(deal)
+
+            # --- DEAL TIPO 3: EVENT ITEM TARGET (Cannabis, Beer, Blood Bags) ---
+            elif is_event_item and market_val > 0 and buy_cost <= (market_val * (1.0 - (self.min_profit_pct / 100.0))):
+                target_sell = int(market_val * 0.99)
+                profit_per_item = target_sell - buy_cost
+                total_profit = profit_per_item * quantity
+                roi = round((profit_per_item / buy_cost) * 100, 1) if buy_cost > 0 else 0.0
+                
+                deal = {
+                    "item_id": item["id"],
+                    "item_name": item["name"],
+                    "deal_type": "MADPUP_EVENT_ITEM",
+                    "buy_source": "Bazaar",
+                    "buy_price": buy_cost,
+                    "target_sell_price": target_sell,
+                    "quantity_available": quantity,
+                    "profit_per_item": profit_per_item,
+                    "total_profit": total_profit,
+                    "roi_pct": roi,
+                    "seller_id": player_id,
+                    "mug_risk": mug_risk,
+                    "buy_url": f"https://www.torn.com/bazaar.php?userId={player_id}#/p=bazaar&userID={player_id}"
+                }
+                deals.append(deal)
+                save_deal(deal)
+
+            # --- DEAL TIPO 4: SCONTO SIGNIFICATIVO STANDARD (>=10%) ---
+            elif market_val > 0 and buy_cost <= (market_val * (1.0 - (self.min_profit_pct / 100.0))):
+                target_sell = int(market_val * 0.99)
+                profit_per_item = target_sell - buy_cost
+                
+                if profit_per_item >= self.min_profit_val and (buy_cost * quantity) <= MAX_BUY_BUDGET:
+                    total_profit = profit_per_item * quantity
+                    roi = round((profit_per_item / buy_cost) * 100, 1) if buy_cost > 0 else 0.0
+                    
+                    deal = {
+                        "item_id": item["id"],
+                        "item_name": item["name"],
+                        "deal_type": "UNDERPRICED_BAZAAR",
+                        "buy_source": "Bazaar",
+                        "buy_price": buy_cost,
+                        "target_sell_price": target_sell,
+                        "quantity_available": quantity,
+                        "profit_per_item": profit_per_item,
+                        "total_profit": total_profit,
+                        "roi_pct": roi,
+                        "seller_id": player_id,
+                        "mug_risk": mug_risk,
+                        "buy_url": f"https://www.torn.com/bazaar.php?userId={player_id}#/p=bazaar&userID={player_id}"
+                    }
+                    deals.append(deal)
+                    save_deal(deal)
                 
             # --- DEAL TIPO 2: SCONTO SIGNIFICATIVO RISPETTO AL VALORE DI MERCATO ---
             elif market_val > 0 and buy_cost <= (market_val * (1.0 - (self.min_profit_pct / 100.0))):

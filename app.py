@@ -140,8 +140,38 @@ def run_scan():
     min_val = int(os.getenv("MIN_PROFIT_VALUE", MIN_PROFIT_VALUE))
     engine = FlippingEngine(min_profit_pct=min_pct, min_profit_val=min_val)
     
-    # Scansiona un pool bilanciato dei top 30 oggetti più scambiati
-    scan_pool = target_items[:30]
+    # Costruisci lo scan pool con priorità assoluta per gli oggetti della guida Madpup
+    conn = get_connection()
+    c = conn.cursor()
+    
+    # 1. Crime Drops (HPCPU, Medical Bills, Bank Statements)
+    crime_items = []
+    from config import MADPUP_CRIME_ITEMS, MADPUP_EVENT_ITEMS, AVOID_ITEMS
+    for ci in MADPUP_CRIME_ITEMS:
+        c.execute("SELECT * FROM items WHERE name LIKE ? LIMIT 2", (f"%{ci}%",))
+        crime_items.extend([dict(r) for r in c.fetchall()])
+        
+    # 2. Event Timed Items (Cannabis, Beers, Blood Bags, Chocolates)
+    event_items = []
+    for ei in MADPUP_EVENT_ITEMS:
+        c.execute("SELECT * FROM items WHERE name LIKE ? LIMIT 2", (f"%{ei}%",))
+        event_items.extend([dict(r) for r in c.fetchall()])
+    conn.close()
+    
+    # Filtra ed unisci evitando duplicati e AVOID_ITEMS
+    seen_ids = set()
+    scan_pool = []
+    
+    for item in crime_items + event_items + target_items:
+        if item["id"] in seen_ids:
+            continue
+        if engine.is_avoided(item["name"]):
+            continue
+        seen_ids.add(item["id"])
+        scan_pool.append(item)
+        if len(scan_pool) >= 40:
+            break
+            
     deals_found = []
     
     for item in scan_pool:
@@ -286,6 +316,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <button onclick="switchTab('deals')" id="tab-deals" class="tab-btn px-4 py-1.5 text-xs font-semibold rounded-lg bg-emerald-500 text-slate-950 shadow">
           <i data-lucide="zap" class="w-3.5 h-3.5 inline mr-1"></i> Radar Affari
         </button>
+        <button onclick="switchTab('madpup')" id="tab-madpup" class="tab-btn px-4 py-1.5 text-xs font-semibold rounded-lg text-slate-300 hover:text-white hover:bg-slate-800/60 transition">
+          <i data-lucide="sparkles" class="w-3.5 h-3.5 inline mr-1 text-amber-400"></i> Metodo Madpup
+        </button>
         <button onclick="switchTab('travel')" id="tab-travel" class="tab-btn px-4 py-1.5 text-xs font-semibold rounded-lg text-slate-300 hover:text-white hover:bg-slate-800/60 transition">
           <i data-lucide="plane" class="w-3.5 h-3.5 inline mr-1"></i> Travel Flipping
         </button>
@@ -317,6 +350,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <!-- Mobile Bottom Nav -->
   <div class="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-950 border-t border-slate-800 flex justify-around p-2">
     <button onclick="switchTab('deals')" class="flex flex-col items-center text-xs text-emerald-400"><i data-lucide="zap" class="w-5 h-5"></i><span>Radar</span></button>
+    <button onclick="switchTab('madpup')" class="flex flex-col items-center text-xs text-amber-400"><i data-lucide="sparkles" class="w-5 h-5"></i><span>Madpup</span></button>
     <button onclick="switchTab('travel')" class="flex flex-col items-center text-xs text-slate-400"><i data-lucide="plane" class="w-5 h-5"></i><span>Travel</span></button>
     <button onclick="switchTab('city')" class="flex flex-col items-center text-xs text-slate-400"><i data-lucide="store" class="w-5 h-5"></i><span>City</span></button>
     <button onclick="switchTab('calculator')" class="flex flex-col items-center text-xs text-slate-400"><i data-lucide="calculator" class="w-5 h-5"></i><span>Calc</span></button>
@@ -343,7 +377,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           <i data-lucide="target" class="w-4 h-4 text-cyan-400"></i>
         </div>
         <div class="text-2xl font-bold mono text-cyan-400" id="stat-deals">-</div>
-        <div class="text-[11px] text-slate-500 mt-1">Margine medio sopra soglia</div>
+        <div class="text-[11px] text-slate-500 mt-1">Margine minimo &ge; 10%</div>
       </div>
 
       <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
@@ -357,11 +391,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
       <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
         <div class="flex items-center justify-between text-slate-400 text-xs mb-1">
-          <span>Fonti & Scanner</span>
-          <i data-lucide="activity" class="w-4 h-4 text-purple-400"></i>
+          <span>Protezione Mugging</span>
+          <i data-lucide="shield-alert" class="w-4 h-4 text-rose-400"></i>
         </div>
-        <div class="text-sm font-bold mono text-purple-300 mt-1">YATA + Torn v1/v2</div>
-        <div class="text-[11px] text-slate-500 mt-1">weav3r.dev / tornpal ready</div>
+        <div class="text-sm font-bold mono text-rose-300 mt-1">&le; $10M / Item</div>
+        <div class="text-[11px] text-slate-500 mt-1">Regola Madpup IM 2.0</div>
       </div>
     </div>
 
@@ -380,8 +414,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             <span class="text-xs text-slate-400">Filtro:</span>
             <select id="deal-filter" onchange="renderDealsTable()" class="bg-slate-950 border border-slate-700 text-xs rounded-lg px-2.5 py-1.5 text-slate-200">
               <option value="ALL">Tutti gli affari</option>
+              <option value="MADPUP_CRIME_DUMP">🎯 Noob Crime Dumps (HPCPU/Estratti)</option>
+              <option value="MADPUP_EVENT_ITEM">🎉 Event Items (Beer/Blood/420)</option>
               <option value="ZERO_RISK_PAWN">🛡️ Zero-Risk Pawn (NPC)</option>
-              <option value="UNDERPRICED_BAZAAR">🏷️ Sotto Mercato</option>
+              <option value="UNDERPRICED_BAZAAR">🏷️ Sotto Mercato (&ge;10%)</option>
               <option value="SPREAD_ARBITRAGE">📊 Arbitraggio Spread</option>
             </select>
           </div>
@@ -411,6 +447,117 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             </tbody>
           </table>
         </div>
+      </div>
+    </section>
+
+    <!-- TAB: METODO MADPUP (CRIME DROPS, EVENTS & ANTI-MUG) -->
+    <section id="pane-madpup" class="tab-pane hidden">
+      <div class="space-y-6">
+        
+        <!-- Hero Card Madpup -->
+        <div class="bg-gradient-to-r from-amber-950/40 via-slate-900/80 to-slate-900/60 border border-amber-500/30 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+          <div class="max-w-3xl">
+            <div class="flex items-center space-x-2 text-amber-400 font-bold text-xs uppercase tracking-wider mb-2">
+              <i data-lucide="award" class="w-4 h-4"></i>
+              <span>Strategia Testata sul Campo: 2 Miliardi $ in 95 Giorni</span>
+            </div>
+            <h2 class="text-xl font-extrabold text-white tracking-tight mb-2">Il Metodo Madpup per il Flipping</h2>
+            <p class="text-xs text-slate-300 leading-relaxed">
+              Il vero profitto nel flipping non viene solo dagli errori di battitura, ma dallo <strong>studio dei cicli, degli eventi e dei crimini</strong>. I principianti svendono oggetti rari credendoli spazzatura, mentre gli eventi stagionali creano picchi di domanda prevedibili.
+            </p>
+          </div>
+        </div>
+
+        <!-- 3 Strategy Pillars -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <!-- Pillar 1 -->
+          <div class="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 hover:border-amber-500/40 transition">
+            <div class="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 mb-4">
+              <i data-lucide="crosshair" class="w-5 h-5"></i>
+            </div>
+            <h3 class="text-sm font-bold text-white mb-1">1. "Search for Cash" & Crimini</h3>
+            <p class="text-xs text-slate-400 leading-relaxed mb-3">
+              Oggetti come <strong>HPCPU, estratti conto bancari (Bank Statements) e fatture mediche</strong> vengono svenduti dai noob per poche centinaia di dollari. Rivendibili a <strong>$100k - $1M+</strong>.
+            </p>
+            <div class="text-[11px] font-mono text-amber-400 bg-amber-950/40 px-2.5 py-1 rounded-lg border border-amber-800/40">
+              Focus: HPCPU, Medical Bills, Bank Statements
+            </div>
+          </div>
+
+          <!-- Pillar 2 -->
+          <div class="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 hover:border-cyan-500/40 transition">
+            <div class="w-10 h-10 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 mb-4">
+              <i data-lucide="calendar" class="w-5 h-5"></i>
+            </div>
+            <h3 class="text-sm font-bold text-white mb-1">2. Mercati Cronometrati (Eventi)</h3>
+            <p class="text-xs text-slate-400 leading-relaxed mb-3">
+              Accumula settimane prima del picco e vendi al momento di massima foga: <strong>Cannabis (420 Day)</strong>, <strong>Beer (Beer Day)</strong>, <strong>Blood Bags (Blood Day)</strong> e <strong>Big Box of Chocolates</strong>.
+            </p>
+            <div class="text-[11px] font-mono text-cyan-400 bg-cyan-950/40 px-2.5 py-1 rounded-lg border border-cyan-800/40">
+              Target: +15% a +35% durante l'evento
+            </div>
+          </div>
+
+          <!-- Pillar 3 -->
+          <div class="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 hover:border-rose-500/40 transition">
+            <div class="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400 mb-4">
+              <i data-lucide="shield-check" class="w-5 h-5"></i>
+            </div>
+            <h3 class="text-sm font-bold text-white mb-1">3. Protocollo Anti-Mugging</h3>
+            <p class="text-xs text-slate-400 leading-relaxed mb-3">
+              Dopo Item Market 2.0, non tenere mai in vendita singoli item sopra i <strong>$10M</strong> nel bazaar. Parcheggia il contante in <strong>azioni SYM</strong> (0.1% fee + Drug Pack settimanale) o vola all'estero.
+            </p>
+            <div class="text-[11px] font-mono text-rose-400 bg-rose-950/40 px-2.5 py-1 rounded-lg border border-rose-800/40">
+              Regola: Safe storage in SYM stock o Flight
+            </div>
+          </div>
+        </div>
+
+        <!-- Avoid List vs Target List -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="bg-slate-900/70 border border-slate-800 rounded-2xl p-5">
+            <h4 class="text-xs font-bold text-rose-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+              <i data-lucide="slash" class="w-4 h-4"></i>
+              Articoli Esclusi da Madpup (Falsi Affari)
+            </h4>
+            <ul class="space-y-2 text-xs text-slate-300">
+              <li class="flex items-start gap-2">
+                <span class="text-rose-400 font-bold">•</span>
+                <div><strong>Xanax:</strong> Troppa concorrenza di bot e spread &lt;1%. Margine bruciato dalle oscillazioni.</div>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="text-rose-400 font-bold">•</span>
+                <div><strong>Erotic DVD (EDVD):</strong> Prezzo ultra-stabile, rotazione lenta, zero volatilità per fare flip veloci.</div>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="text-rose-400 font-bold">•</span>
+                <div><strong>Sand e Luxury Rarities (&gt;$25M):</strong> Mercato piccolissimo, capitale bloccato per settimane.</div>
+              </li>
+            </ul>
+          </div>
+
+          <div class="bg-slate-900/70 border border-slate-800 rounded-2xl p-5">
+            <h4 class="text-xs font-bold text-emerald-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+              <i data-lucide="check-circle" class="w-4 h-4"></i>
+              Regole d'Oro per l'Esecuzione
+            </h4>
+            <ul class="space-y-2 text-xs text-slate-300">
+              <li class="flex items-start gap-2">
+                <span class="text-emerald-400 font-bold">•</span>
+                <div><strong>Margine minimo 10%:</strong> Se il profitto netto scende sotto il 10%, smetti di comprare e attendi.</div>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="text-emerald-400 font-bold">•</span>
+                <div><strong>Usa il tuo Bazaar (250 pts):</strong> Ha 0% tasse rispetto al 3-5% dell'Item Market (Torn Tax).</div>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="text-emerald-400 font-bold">•</span>
+                <div><strong>I rapinatori sono clienti:</strong> Non bloccarli, spesso tornano a comprare per recuperare il denaro speso.</div>
+              </li>
+            </ul>
+          </div>
+        </div>
+
       </div>
     </section>
 
@@ -680,17 +827,25 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         let badge = '<span class="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300">FLIP</span>';
         if (d.deal_type === 'ZERO_RISK_PAWN') {
           badge = '<span class="px-2 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">🛡️ ZERO-RISK PAWN</span>';
+        } else if (d.deal_type === 'MADPUP_CRIME_DUMP') {
+          badge = '<span class="px-2 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-400 border border-amber-500/30 font-bold">🎯 NOOB CRIME DUMP</span>';
+        } else if (d.deal_type === 'MADPUP_EVENT_ITEM') {
+          badge = '<span class="px-2 py-0.5 rounded text-[10px] bg-rose-500/20 text-rose-400 border border-rose-500/30 font-bold">🎉 EVENT PUMP ITEM</span>';
         } else if (d.deal_type === 'UNDERPRICED_BAZAAR') {
           badge = '<span class="px-2 py-0.5 rounded text-[10px] bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">🏷️ SOTTO MERCATO</span>';
         } else if (d.deal_type === 'SPREAD_ARBITRAGE') {
           badge = '<span class="px-2 py-0.5 rounded text-[10px] bg-purple-500/20 text-purple-400 border border-purple-500/30">📊 SPREAD GAP</span>';
         }
 
+        const mugAlert = d.mug_risk 
+          ? `<span class="inline-flex items-center gap-1 text-[10px] text-rose-400 bg-rose-950/60 px-1.5 py-0.5 rounded border border-rose-800 ml-1 font-semibold" title="Transazione >$10M: rischia mugging! Parcheggia subito in azioni SYM o vola!">⚠️ >$10M Mug Risk</span>` 
+          : '';
+
         return `
           <tr class="table-row-hover transition">
             <td class="py-3 px-4">${badge}</td>
             <td class="py-3 px-4 font-semibold text-white">
-              <div>${d.item_name}</div>
+              <div class="flex items-center">${d.item_name} ${mugAlert}</div>
               <div class="text-[10px] text-slate-500 font-normal">Disponibili: ${d.quantity_available || 1} pz</div>
             </td>
             <td class="py-3 px-4 text-right mono text-rose-400">${formatMoney(d.buy_price)}</td>

@@ -1,0 +1,17 @@
+# Environments & Secrets
+.env
+*.env
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Database & runtime files
+*.db
+*.sqlite
+*.sqlite3
+logs/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
